@@ -48,3 +48,29 @@ async def test_out_of_order_status_events(
     ]
     assert message.current_status == MessageStatus.READ
     assert message.status_updated_at == datetime(2026, 9, 29, 19, 5)
+
+
+async def test_status_event_with_timezone_is_stored_as_utc(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    webhook_headers: dict[str, str],
+):
+    message = await create_outbound_message(db_session)
+
+    # 00:35 at +05:30 is 19:05 UTC on the previous day.
+    response = await client.post(
+        "/webhook/status",
+        json=status_payload("event_tz", "read", "2026-09-30T00:35:00+05:30"),
+        headers=webhook_headers,
+    )
+
+    assert response.status_code == 200
+
+    events = await stored_events(db_session)
+
+    assert len(events) == 1
+    assert events[0].event_timestamp == datetime(2026, 9, 29, 19, 5)
+
+    message = await reload_message(db_session, message)
+
+    assert message.status_updated_at == datetime(2026, 9, 29, 19, 5)
