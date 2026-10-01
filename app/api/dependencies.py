@@ -1,3 +1,4 @@
+import secrets
 from typing import Annotated
 from uuid import UUID
 
@@ -98,9 +99,14 @@ WebhookServiceDep = Annotated[
 
 
 async def verify_webhook_secret(
-    x_webhook_secret: Annotated[str, Header()],
+    x_webhook_secret: Annotated[str | None, Header()] = None,
 ):
-    if x_webhook_secret != webhook_settings.WEBHOOK_SECRET:
+    # A missing header is treated the same as a wrong one. compare_digest
+    # takes the same time whether or not the values match.
+    if x_webhook_secret is None or not secrets.compare_digest(
+        x_webhook_secret.encode(),
+        webhook_settings.WEBHOOK_SECRET.encode(),
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid webhook secret",
