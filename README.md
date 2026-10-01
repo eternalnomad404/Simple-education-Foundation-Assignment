@@ -24,6 +24,8 @@ The application includes:
 -   webhook endpoints for simulated messaging-provider callbacks
 -   audit events
 -   seed data for exercising the messaging flow
+-   a pytest test suite
+-   a Docker Compose setup that runs the application and its dependencies
 
 More detailed architecture documentation is available in:
 
@@ -42,26 +44,12 @@ structure and the responsibility of the main modules.
 
 ## 2. Prerequisites
 
-Before starting, make sure you have the following installed:
+-   Docker with Docker Compose (Docker Desktop includes both)
 
--   Python 3.12
--   `uv`
--   PostgreSQL
--   Redis
+Nothing else needs to be installed. Python, PostgreSQL and Redis all run
+in containers.
 
-The project was developed using PostgreSQL and Redis locally.
-
-## 3. Install the project
-
-Clone the repository and move into the project directory.
-
-Install the project dependencies:
-
-``` bash
-uv sync
-```
-
-## 4. Environment configuration
+## 3. Configure the environment
 
 Create your local `.env` file from the provided `.env.example` file.
 
@@ -77,64 +65,54 @@ On Windows PowerShell:
 Copy-Item .env.example .env
 ```
 
-Update the values in `.env` for your local PostgreSQL and Redis setup
-where required.
+The defaults in `.env.example` are enough to run the application on your
+own machine. The file explains each value. Change the database password,
+`JWT_SECRET` and `WEBHOOK_SECRET` before using it anywhere else.
 
-The application also expects a webhook secret. The value configured for
-`WEBHOOK_SECRET` is used to authenticate requests to the webhook
-endpoints through the `X-Webhook-Secret` header.
+`WEBHOOK_SECRET` is the value webhook requests must send in the
+`X-Webhook-Secret` header.
 
 Do not commit your local `.env` file.
 
-## 5. Prepare PostgreSQL
-
-Create an empty PostgreSQL database for the application and make sure
-the database configuration in `.env` points to it.
-
-Then apply all existing migrations:
+## 4. Start the application
 
 ``` bash
-uv run alembic upgrade head
+docker compose up --build
 ```
 
-Alembic is responsible for creating the application schema. You do not
-need to create the tables manually.
+This single command:
 
-## 6. Start Redis
+1.  starts PostgreSQL and Redis and waits until both are ready,
+2.  applies all Alembic migrations (the `migrate` service, which then
+    exits),
+3.  starts the API once the migrations have succeeded.
 
-Make sure a Redis server is running using the host and port configured
-in your `.env`.
+The API is then available at:
 
-Redis is used by the authentication flow for token blacklisting.
+-   http://127.0.0.1:8000/ - health check
+-   http://127.0.0.1:8000/docs - API documentation
+-   http://127.0.0.1:8000/scalar - Scalar API documentation
 
-## 7. Start the API
+If port 8000 is already in use, set `APP_PORT` in `.env` to another port.
 
-Run the FastAPI application:
+PostgreSQL and Redis are not published on the host, so they cannot clash
+with a PostgreSQL or Redis you already have running.
+
+Useful commands:
 
 ``` bash
-fastapi dev app/main.py
+docker compose up --build -d     # run in the background
+docker compose logs -f api       # follow the API logs
+docker compose down              # stop, keeping the database
+docker compose down -v           # stop and delete the database
 ```
 
-Once the server is running, open the API documentation exposed by the
-application.
+The database lives in a Docker volume. Setting a different
+`POSTGRES_PASSWORD` after the first start does not change the password of
+the existing database; run `docker compose down -v` to start again from an
+empty one.
 
-Once the server is running, you can access the API documentation
-at http://127.0.0.1:8000/docs or the Scalar documentation
-at http://127.0.0.1:8000/scalar - Same is implemented in main.py
-
-## 8. Verify the application
-
-Before continuing, verify that:
-
-1.  PostgreSQL is running.
-2.  Redis is running.
-3.  All Alembic migrations have completed successfully.
-4.  The FastAPI application starts without errors.
-5.  GET / responds successfully. (health endpoint)
-
-At this point, the base application is running correctly.
-
-## 9. Create the initial API data
+## 5. Create the initial API data
 
 Before running the seed script, create the campaign used by the seeded
 messaging example.
@@ -156,12 +134,12 @@ Create this campaign once.
 The campaign is created through the API rather than by the seed script
 so that the existing authenticated campaign and audit flow is exercised.
 
-## 10. Run the seed
+## 6. Run the seed
 
-Once the campaign exists, run:
+Once the campaign exists, and with the application running:
 
 ``` bash
-uv run python -m scripts.seed
+docker compose exec api python -m scripts.seed
 ```
 
 The seed creates/reuses the sample cohort, teachers and outbound message
@@ -173,7 +151,9 @@ existing seed records are reused rather than inserted again.
 If the required `Weekly Teacher Check-in` campaign does not exist, the
 seed will stop with an explanatory error.
 
-## 11. Exercise the webhook flow
+## 7. Exercise the application
+
+### Webhooks
 
 The repository contains webhook endpoints representing callbacks from a
 messaging provider.
@@ -185,6 +165,8 @@ requests. Send the configured webhook secret using:
 X-Webhook-Secret: <your configured WEBHOOK_SECRET>
 ```
 
+A request with a missing or incorrect secret is rejected with `401`.
+
 The existing webhook surface includes:
 
 ``` text
@@ -192,7 +174,20 @@ POST /webhook/message
 POST /webhook/status
 ```
 
-The seeded outbound message can be used to exercise the status webhook.
+The seeded outbound message can be used to exercise the status webhook:
+
+``` bash
+curl -X POST http://127.0.0.1:8000/webhook/status \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Secret: communicator_key" \
+  -d '{
+        "provider": "fake_provider",
+        "provider_event_id": "event_001",
+        "provider_message_id": "msg_out_001",
+        "status": "delivered",
+        "event_timestamp": "2026-09-29T19:00:00Z"
+      }'
+```
 
 Refer to:
 
@@ -200,10 +195,60 @@ Refer to:
 architecture_readme/README_WEBHOOK.md
 ```
 
-for the webhook schemas, an example status payload, and an
-explanation of the message lifecycle.
+for the webhook schemas and an explanation of the message lifecycle.
 
-## 12. Suggested reading order
+### Teachers
+
+An authenticated user can create a teacher:
+
+``` text
+GET  /cohort/all     list cohorts, to find the cohort id (public)
+POST /teacher/       create a teacher (requires a logged-in user)
+```
+
+``` json
+{
+  "name": "Meera",
+  "phone": "+91 98765 43299",
+  "cohort_id": "<id from GET /cohort/all>"
+}
+```
+
+The phone number is stored as digits only (`919876543299`), must be 8 to
+15 digits including the country code, and must not already belong to
+another teacher. Cohorts are still created by the seed script.
+
+## 8. Run the tests
+
+``` bash
+docker compose run --rm --build tests
+```
+
+This is the only command needed; it starts PostgreSQL if it is not
+already running.
+
+The tests run the real application against a real PostgreSQL server. They
+use their own database, `communicator_test`, which the test run creates
+and migrates itself. Your development data is never read or changed, and
+the tests do not depend on the seed script.
+
+### Running without Docker
+
+The application and tests can also be run directly, which is convenient
+while developing. This needs Python 3.12, [`uv`](https://docs.astral.sh/uv/),
+and a PostgreSQL and Redis you provide, with `POSTGRES_SERVER`,
+`POSTGRES_PORT`, `REDIS_HOST` and `REDIST_PORT` in `.env` pointing at
+them.
+
+``` bash
+uv sync
+uv run alembic upgrade head
+uv run fastapi dev app/main.py
+uv run python -m scripts.seed
+uv run pytest
+```
+
+## 9. Suggested reading order
 
 Once the application is running, a useful order for understanding the
 repository is:
@@ -223,20 +268,21 @@ You are expected to understand the relevant existing code before making
 changes for the assignment, but you are not expected to redesign or
 productionise unrelated parts of the application.
 
-## 13. Database changes
+## 10. Database changes
 
-If your assignment work requires a database schema change, create a new
-Alembic migration rather than modifying an existing migration.
+If your work requires a database schema change, create a new Alembic
+migration rather than modifying an existing migration.
 
 Review generated migrations before applying them.
 
-Apply new migrations with:
+New migrations are applied the next time the application is started with
+`docker compose up --build`. To apply them without restarting:
 
 ``` bash
-uv run alembic upgrade head
+docker compose run --rm --build migrate
 ```
 
-## 14. Scope
+## 11. Scope
 
 This repository is deliberately a small assessment scaffold.
 
