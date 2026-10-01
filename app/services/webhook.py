@@ -94,9 +94,13 @@ class WebhookService(BaseService):
             message_id=message.id,
         )
 
+        # The time of the latest event in the timeline, by provider time.
+        # Comparing against the stored value is not enough: it starts as
+        # the message's creation time, so an event that happened before
+        # the row was created would never be reflected.
         message.status_updated_at = max(
-            data.event_timestamp,
-            message.status_updated_at,
+            [event.event_timestamp for event in message.timeline]
+            + [data.event_timestamp]
         )
 
         self.session.add(event)
