@@ -53,11 +53,17 @@ class WebhookService(BaseService):
         self,
         data: MessageStatusWebhook,
     ):
+        # Lock the message row until this request commits, so that events
+        # for the same message are processed one at a time. Without it, a
+        # retry overlapping the original delivery passes the duplicate
+        # check below before either has been stored.
         result = await self.session.execute(
-            select(Message).where(
+            select(Message)
+            .where(
                 Message.provider == data.provider,
                 Message.provider_message_id == data.provider_message_id,
             )
+            .with_for_update()
         )
 
         message = result.scalar_one_or_none()
