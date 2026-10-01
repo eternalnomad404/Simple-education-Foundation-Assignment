@@ -11,6 +11,7 @@ from app.db.models import User
 from app.db.redis import is_jti_blacklisted
 from app.db.session import get_session
 from app.services.campaign import CampaignService
+from app.services.cohort import CohortService
 from app.services.user import UserService
 from app.services.webhook import WebhookService
 from app.utils import decode_access_token
@@ -29,6 +30,17 @@ async def get_campaign_service(
 CampaignServiceDep = Annotated[
     CampaignService,
     Depends(get_campaign_service),
+]
+
+### Reusable Cohort Service Dependency
+async def get_cohort_service(
+    session: SessionDep,
+):
+    return CohortService(session)
+
+CohortServiceDep = Annotated[
+    CohortService,
+    Depends(get_cohort_service),
 ]
 
 ### Reusable User Service Dependency
