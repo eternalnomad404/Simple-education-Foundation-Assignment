@@ -12,6 +12,7 @@ from app.db.redis import is_jti_blacklisted
 from app.db.session import get_session
 from app.services.campaign import CampaignService
 from app.services.cohort import CohortService
+from app.services.teacher import TeacherService
 from app.services.user import UserService
 from app.services.webhook import WebhookService
 from app.utils import decode_access_token
@@ -41,6 +42,17 @@ async def get_cohort_service(
 CohortServiceDep = Annotated[
     CohortService,
     Depends(get_cohort_service),
+]
+
+### Reusable Teacher Service Dependency
+async def get_teacher_service(
+    session: SessionDep,
+):
+    return TeacherService(session)
+
+TeacherServiceDep = Annotated[
+    TeacherService,
+    Depends(get_teacher_service),
 ]
 
 ### Reusable User Service Dependency
