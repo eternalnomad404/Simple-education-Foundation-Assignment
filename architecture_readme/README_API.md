@@ -328,6 +328,8 @@ The API currently supports:
 -   Authenticated Campaign updates
 -   Authenticated Campaign deletion
 -   Campaign audit history generation
+-   Public Cohort listing
+-   Authenticated Teacher creation, with an audit record
 -   Health check
 -   Incoming message webhook
 -   Message status webhook

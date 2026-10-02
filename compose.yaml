@@ -1,0 +1,92 @@
+# Brings up the API together with PostgreSQL and Redis:
+#
+#   docker compose up --build
+#
+# Values come from the .env file (copy .env.example to .env first).
+
+# Inside the Compose network the services reach each other by service name,
+# so these override whatever host and port the .env file holds.
+x-app-environment: &app-environment
+  POSTGRES_SERVER: db
+  POSTGRES_PORT: "5432"
+  REDIS_HOST: redis
+  REDIST_PORT: "6379"
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USERNAME}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USERNAME} -d ${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Applies the Alembic migrations, then exits. The API starts only after
+  # this has finished successfully.
+  migrate:
+    build:
+      context: .
+      target: runtime
+    command: ["alembic", "upgrade", "head"]
+    env_file: .env
+    environment: *app-environment
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      target: runtime
+    env_file: .env
+    environment: *app-environment
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/')"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Not started by `docker compose up`. Run the test suite with:
+  #
+  #   docker compose run --rm --build tests
+  #
+  # The suite creates and uses its own database (communicator_test) on the
+  # same PostgreSQL server, so development data is never touched.
+  tests:
+    profiles: ["test"]
+    build:
+      context: .
+      target: test
+    env_file: .env
+    environment: *app-environment
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

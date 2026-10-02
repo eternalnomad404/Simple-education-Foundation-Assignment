@@ -69,7 +69,7 @@ raw_payload
 message_id
 ```
 
-`event_timestamp` is the time reported by the provider.
+`event_timestamp` is the time reported by the provider. It is stored in UTC without a timezone: a timestamp that carries a timezone is converted to UTC, and one without a timezone is taken to already be in UTC.
 
 `received_at` is when our application received the webhook.
 
@@ -243,6 +243,8 @@ event_001 arrives again
 
 The database uniqueness constraint provides an additional integrity guarantee around the provider event identifier.
 
+A retry can also overlap with the original delivery. The message row is therefore locked while a status event for it is processed, so the second request waits for the first to finish and then finds the stored event.
+
 ## Out-of-Order Events
 
 Webhook events are not guaranteed to arrive in chronological order.
@@ -262,7 +264,7 @@ The `Message.timeline` relationship is therefore ordered by `MessageEvent.event_
 
 The derived `current_status` uses the latest event in that chronological timeline.
 
-`status_updated_at` is also only moved forward when the incoming event timestamp is newer than the currently stored timestamp.
+`status_updated_at` is set to the latest `event_timestamp` in the message's timeline, so it always agrees with `current_status` and an older event arriving late does not move it backwards. Before any event has been received it holds the message's creation time.
 
 This allows the event history to remain complete even when provider delivery is delayed or reordered.
 
@@ -280,7 +282,7 @@ X-Webhook-Secret
 
 The supplied value must match `WEBHOOK_SECRET` from the application environment.
 
-Requests with an incorrect secret are rejected.
+Requests with a missing or incorrect secret are rejected with `401`.
 
 This is intentionally a simple shared-secret mechanism suitable for the fake-provider scope.
 

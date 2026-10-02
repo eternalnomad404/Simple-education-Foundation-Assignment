@@ -53,11 +53,17 @@ class WebhookService(BaseService):
         self,
         data: MessageStatusWebhook,
     ):
+        # Lock the message row until this request commits, so that events
+        # for the same message are processed one at a time. Without it, a
+        # retry overlapping the original delivery passes the duplicate
+        # check below before either has been stored.
         result = await self.session.execute(
-            select(Message).where(
+            select(Message)
+            .where(
                 Message.provider == data.provider,
                 Message.provider_message_id == data.provider_message_id,
             )
+            .with_for_update()
         )
 
         message = result.scalar_one_or_none()
@@ -88,9 +94,13 @@ class WebhookService(BaseService):
             message_id=message.id,
         )
 
+        # The time of the latest event in the timeline, by provider time.
+        # Comparing against the stored value is not enough: it starts as
+        # the message's creation time, so an event that happened before
+        # the row was created would never be reflected.
         message.status_updated_at = max(
-            data.event_timestamp,
-            message.status_updated_at,
+            [event.event_timestamp for event in message.timeline]
+            + [data.event_timestamp]
         )
 
         self.session.add(event)

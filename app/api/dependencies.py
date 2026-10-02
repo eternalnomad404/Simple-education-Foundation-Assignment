@@ -1,3 +1,4 @@
+import secrets
 from typing import Annotated
 from uuid import UUID
 
@@ -10,6 +11,8 @@ from app.db.models import User
 from app.db.redis import is_jti_blacklisted
 from app.db.session import get_session
 from app.services.campaign import CampaignService
+from app.services.cohort import CohortService
+from app.services.teacher import TeacherService
 from app.services.user import UserService
 from app.services.webhook import WebhookService
 from app.utils import decode_access_token
@@ -28,6 +31,28 @@ async def get_campaign_service(
 CampaignServiceDep = Annotated[
     CampaignService,
     Depends(get_campaign_service),
+]
+
+### Reusable Cohort Service Dependency
+async def get_cohort_service(
+    session: SessionDep,
+):
+    return CohortService(session)
+
+CohortServiceDep = Annotated[
+    CohortService,
+    Depends(get_cohort_service),
+]
+
+### Reusable Teacher Service Dependency
+async def get_teacher_service(
+    session: SessionDep,
+):
+    return TeacherService(session)
+
+TeacherServiceDep = Annotated[
+    TeacherService,
+    Depends(get_teacher_service),
 ]
 
 ### Reusable User Service Dependency
@@ -98,9 +123,14 @@ WebhookServiceDep = Annotated[
 
 
 async def verify_webhook_secret(
-    x_webhook_secret: Annotated[str, Header()],
+    x_webhook_secret: Annotated[str | None, Header()] = None,
 ):
-    if x_webhook_secret != webhook_settings.WEBHOOK_SECRET:
+    # A missing header is treated the same as a wrong one. compare_digest
+    # takes the same time whether or not the values match.
+    if x_webhook_secret is None or not secrets.compare_digest(
+        x_webhook_secret.encode(),
+        webhook_settings.WEBHOOK_SECRET.encode(),
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid webhook secret",
